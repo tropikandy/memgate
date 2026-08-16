@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+#
+# IF-5 canonical template. Every «VERIFY» below MUST be filled from a
+# capture on the live machine (WP-001 for the 4B, WP-005 for the 27B).
+# Never invent a value behind a «VERIFY» marker -- if you cannot capture
+# it, stop and report which marker is blocking you.
+
+# Generous: covers a cold 27B load from external SSD (N2). Minimum accepted is 15.
+healthCheckTimeout: 300
+
+# Internal backend ports are allocated from here upward by ${PORT}.
+# «VERIFY: chosen to avoid every port currently in use on this machine,
+# see the WP-001 lsof capture»
+startPort: 9200
+
+logLevel: info
+
+macros:
+  mtplx_python: "«VERIFY: interpreter path from the MTPLX 4B LaunchAgent plist»"
+  mtplx_module: "mtplx.server.openai"
+  memgate: "/usr/local/bin/memgate --require-free-mb 6144 --timeout 180 --"
+
+models:
+
+  # ---- fast tier -------------------------------------------------------
+  "«VERIFY: exact 4B model id from the pre-cutover /v1/models capture»":
+    cmd: >
+      ${memgate}
+      ${mtplx_python} -m ${mtplx_module}
+      --model «VERIFY: 4B model path from plist»
+      --model-id «VERIFY: --model-id from plist»
+      «VERIFY: host/port flag names from plist» 127.0.0.1 ${PORT}
+      --profile sustained
+      --generation-mode mtp
+      --depth 3
+      --context-window 131072
+      --paged-kv-quantization q8
+      --ssd-session-cache on
+      --scheduler-mode serial
+      --batching-preset latency
+      --max-active-requests 1
+      --reasoning-mode auto
+      --preserve-thinking auto
+    proxy: "http://127.0.0.1:${PORT}"
+    checkEndpoint: /v1/models
+    ttl: 900          # 15 min. Fast tier is the common path, keep it warm longer.
+    unloadTimeout: 30 # let --ssd-session-cache flush before force-kill (C5)
+    aliases:
+      - "«VERIFY: any other id string consumers currently send»"
+
+  # ---- escalation tier -------------------------------------------------
+  "«VERIFY: chosen 27B model id»":
+    cmd: >
+      ${memgate}
+      ${mtplx_python} -m ${mtplx_module}
+      --model «VERIFY: 27B model path, captured live in WP-005»
+      --model-id «VERIFY»
+      «VERIFY: host/port flags» 127.0.0.1 ${PORT}
+      «VERIFY: full remaining flag set from the live 27B-bare run»
+    proxy: "http://127.0.0.1:${PORT}"
+    checkEndpoint: /v1/models
+    ttl: 300          # shorter than the 4B: this is the memory hog, return to safe state sooner
+    unloadTimeout: 45 # larger model, more teardown
+
+groups:
+  # Redundant with llama-swap's default one-at-a-time behaviour, but stated
+  # explicitly: this line is the machine-readable form of R4, and the reason
+  # the 2026-08-04 panic shape cannot recur.
+  mtplx-exclusive:
+    swap: true
+    exclusive: true
+    members:
+      - "«VERIFY: 4B id»"
+      - "«VERIFY: 27B id»"

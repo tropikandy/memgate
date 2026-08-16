@@ -1,0 +1,160 @@
+#!/bin/bash
+# memgate: refuse to exec a command until measured free memory clears a floor.
+# See docs/Local-Model-Gateway-Build-Spec.md IF-3 for the full contract.
+set -u
+
+prog="memgate"
+
+usage() {
+  cat >&2 <<EOF
+usage: $prog [options] -- <command> [args...]
+
+  --require-free-mb N   Minimum available memory (MB) before exec. Required.
+  --timeout N            Seconds to wait before giving up. Default 180.
+  --poll N               Poll interval in seconds. Default 2.
+  --metric NAME          "available" or "free". Default "available".
+  --lock-file PATH       Optional yield-lock path checked before the floor
+                         check. If the file exists, memgate blocks and
+                         refuses with a reason naming the lock. Unset by
+                         default (no lock check).
+  --log PATH             Append log destination. Default stderr.
+  --dry-run              Report the decision and exit without exec.
+
+Env overrides: MEMGATE_REQUIRE_FREE_MB, MEMGATE_TIMEOUT, MEMGATE_POLL,
+MEMGATE_METRIC, MEMGATE_LOCK_FILE, MEMGATE_READER_CMD (test hook: a command
+whose stdout is parsed exactly like 'vm_stat', used to stub the memory
+reader in tests instead of reading real system state).
+
+Optional pre-exec hook: MEMGATE_PREEXEC_CMD, an arbitrary command run in
+the background (not awaited) immediately before exec, e.g. to launch a
+warmup sidecar (IF-7). Failures are logged and never block exec.
+
+Exit codes: child's exit code on success (via exec), 75 on timeout,
+64 on bad usage.
+EOF
+}
+
+log() {
+  local msg="$1"
+  local line
+  line="$(date -u +%Y-%m-%dT%H:%M:%SZ) $prog: $msg"
+  if [ -n "${LOG_PATH:-}" ]; then
+    printf '%s\n' "$line" >>"$LOG_PATH"
+  else
+    printf '%s\n' "$line" >&2
+  fi
+}
+
+# Reads memory stats from vm_stat (or MEMGATE_READER_CMD if set, for tests)
+# and prints "available_mb free_mb" on stdout.
+read_memory_mb() {
+  local reader_cmd="${MEMGATE_READER_CMD:-vm_stat}"
+  local vm_out
+  if ! vm_out="$($reader_cmd 2>/dev/null)"; then
+    log "memory reader command failed: $reader_cmd"
+    return 1
+  fi
+
+  local page_size
+  page_size="$(printf '%s\n' "$vm_out" | head -1 | grep -oE '[0-9]+' | head -1)"
+  if [ -z "$page_size" ]; then
+    page_size=4096
+  fi
+
+  local free_pages inactive_pages speculative_pages purgeable_pages
+  free_pages="$(printf '%s\n' "$vm_out" | awk -F'[ :.]+' '/^Pages free/{print $3}')"
+  inactive_pages="$(printf '%s\n' "$vm_out" | awk -F'[ :.]+' '/^Pages inactive/{print $3}')"
+  speculative_pages="$(printf '%s\n' "$vm_out" | awk -F'[ :.]+' '/^Pages speculative/{print $3}')"
+  purgeable_pages="$(printf '%s\n' "$vm_out" | awk -F'[ :.]+' '/^Pages purgeable/{print $3}')"
+
+  free_pages=${free_pages:-0}
+  inactive_pages=${inactive_pages:-0}
+  speculative_pages=${speculative_pages:-0}
+  purgeable_pages=${purgeable_pages:-0}
+
+  local free_mb available_mb
+  free_mb=$(( free_pages * page_size / 1048576 ))
+  available_mb=$(( (free_pages + inactive_pages + speculative_pages + purgeable_pages) * page_size / 1048576 ))
+
+  printf '%s %s\n' "$available_mb" "$free_mb"
+}
+
+require_free_mb="${MEMGATE_REQUIRE_FREE_MB:-}"
+timeout_s="${MEMGATE_TIMEOUT:-180}"
+poll_s="${MEMGATE_POLL:-2}"
+metric="${MEMGATE_METRIC:-available}"
+lock_file="${MEMGATE_LOCK_FILE:-}"
+LOG_PATH=""
+dry_run=0
+
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --require-free-mb) require_free_mb="$2"; shift 2 ;;
+    --timeout) timeout_s="$2"; shift 2 ;;
+    --poll) poll_s="$2"; shift 2 ;;
+    --metric) metric="$2"; shift 2 ;;
+    --lock-file) lock_file="$2"; shift 2 ;;
+    --log) LOG_PATH="$2"; shift 2 ;;
+    --dry-run) dry_run=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    --) shift; args=("$@"); break ;;
+    *) echo "$prog: unknown option: $1" >&2; usage; exit 64 ;;
+  esac
+done
+
+if [ -z "$require_free_mb" ]; then
+  echo "$prog: --require-free-mb is required" >&2
+  usage
+  exit 64
+fi
+
+if [ "$metric" != "available" ] && [ "$metric" != "free" ]; then
+  echo "$prog: --metric must be 'available' or 'free'" >&2
+  exit 64
+fi
+
+if [ ${#args[@]} -eq 0 ] && [ "$dry_run" -eq 0 ]; then
+  echo "$prog: no command given after --" >&2
+  usage
+  exit 64
+fi
+
+start_ts=$(date +%s)
+elapsed=0
+
+while :; do
+  if [ -n "$lock_file" ] && [ -e "$lock_file" ]; then
+    log "blocked: yield lock held at $lock_file"
+  else
+    mem_line="$(read_memory_mb)" || { sleep "$poll_s"; elapsed=$(( $(date +%s) - start_ts )); if [ "$elapsed" -ge "$timeout_s" ]; then log "timed out after ${elapsed}s: memory reader unavailable"; exit 75; fi; continue; }
+    available_mb="${mem_line% *}"
+    free_mb="${mem_line#* }"
+    measured=$available_mb
+    [ "$metric" = "free" ] && measured=$free_mb
+
+    if [ "$measured" -ge "$require_free_mb" ]; then
+      log "clear: ${metric}=${measured}MB >= floor=${require_free_mb}MB (elapsed ${elapsed}s)"
+      if [ "$dry_run" -eq 1 ]; then
+        echo "clear"
+        exit 0
+      fi
+      if [ -n "${MEMGATE_PREEXEC_CMD:-}" ]; then
+        ( eval "$MEMGATE_PREEXEC_CMD" >>"${LOG_PATH:-/dev/stderr}" 2>&1 & )
+      fi
+      exec "${args[@]}"
+    fi
+    log "blocked: ${metric}=${measured}MB < floor=${require_free_mb}MB (elapsed ${elapsed}s)"
+  fi
+
+  elapsed=$(( $(date +%s) - start_ts ))
+  if [ "$elapsed" -ge "$timeout_s" ]; then
+    log "timed out after ${elapsed}s waiting for floor"
+    if [ "$dry_run" -eq 1 ]; then
+      echo "blocked"
+      exit 0
+    fi
+    exit 75
+  fi
+  sleep "$poll_s"
+done

@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""memwarden: the arbiter daemon (WP-014 scope: lock and ladder core only).
+
+Owns the yield lock and the degradation ladder (levels 0-4, see
+docs/Local-Model-Gateway-Build-Spec.md Section 6.4 and IF-6). This WP ships
+with every inferred signal (memory pressure, priority processes, GPU
+utilisation) disabled -- the ladder is driven only by the explicit lock
+file / HTTP / CLI, per WP-014's own scope-out. Inferred signals are added
+in WP-015 as independent, individually-testable modules; none of that
+belongs in this file until then.
+
+Stdlib only, no third-party dependencies. All paths, ports, thresholds,
+and process names come from the config file or CLI flags -- nothing
+machine-specific is hardcoded (R13).
+"""
+import argparse
+import json
+import os
+import sys
+import time
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+DEFAULT_LOCK_FILE = "/tmp/model-gateway.yield"
+DEFAULT_HTTP_HOST = "127.0.0.1"
+DEFAULT_HTTP_PORT = 8010
+DEFAULT_GATEWAY_URL = "http://127.0.0.1:8000"
+DEFAULT_UNLOAD_PATH = "/api/models/unload"
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+class LadderState:
+    """Thread-safe ladder level plus lock bookkeeping."""
+
+    LEVEL_NORMAL = 0
+    LEVEL_CONSERVE = 1
+    LEVEL_NO_ADMISSIONS = 2
+    LEVEL_DRAIN = 3
+    LEVEL_HARD_RELEASE = 4
+
+    def __init__(self, lock_file, gateway_url, unload_path, event_log_path):
+        self.lock_file = lock_file
+        self.gateway_url = gateway_url
+        self.unload_path = unload_path
+        self.event_log_path = event_log_path
+        self._lock = threading.Lock()
+        self._level = self.LEVEL_NORMAL
+        self._held_locks = {}  # requested_by -> {reason, expires}
+
+    def _log_event(self, kind, **fields):
+        event = {"ts": now_iso(), "event": kind}
+        event.update(fields)
+        line = json.dumps(event)
+        if self.event_log_path:
+            os.makedirs(os.path.dirname(self.event_log_path) or ".", exist_ok=True)
+            with open(self.event_log_path, "a") as f:
+                f.write(line + "\n")
+        print(line, file=sys.stderr)
+
+    def _write_lock_file(self, reason, requested_by, ttl_seconds):
+        payload = {"reason": reason, "requested_by": requested_by}
+        if ttl_seconds is not None:
+            expires = time.time() + ttl_seconds
+            payload["expires"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires)
+            )
+        with open(self.lock_file, "w") as f:
+            json.dump(payload, f)
+
+    def yield_(self, reason, requested_by, ttl_seconds=None):
+        with self._lock:
+            self._write_lock_file(reason, requested_by, ttl_seconds)
+            self._level = self.LEVEL_DRAIN
+            self._log_event(
+                "yield", reason=reason, requested_by=requested_by, level=self._level
+            )
+        self._drain_and_unload(reason)
+
+    def release(self):
+        with self._lock:
+            if os.path.exists(self.lock_file):
+                os.remove(self.lock_file)
+            self._level = self.LEVEL_NORMAL
+            self._log_event("release", level=self._level)
+
+    def _drain_and_unload(self, reason):
+        # Graceful path (levels 1-3): rely on llama-swap's own TTL/drain
+        # semantics for in-flight requests, then force an unload via the
+        # management API so idle time is not required. Never kill mid-flight
+        # here -- that is level 4 only (R19), and level 4 is out of scope
+        # for WP-014 (no inferred signal can reach it yet).
+        import urllib.request
+        import urllib.error
+
+        url = self.gateway_url.rstrip("/") + self.unload_path
+        try:
+            req = urllib.request.Request(url, method="POST")
+            urllib.request.urlopen(req, timeout=30)
+            self._log_event("unload", reason=reason, ok=True)
+        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+            self._log_event("unload", reason=reason, ok=False, error=str(exc))
+
+    def check_stale_lock(self, max_age_s=None):
+        if not os.path.exists(self.lock_file):
+            if self._level != self.LEVEL_NORMAL:
+                with self._lock:
+                    self._level = self.LEVEL_NORMAL
+            return
+        try:
+            with open(self.lock_file) as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            payload = {}
+        expires = payload.get("expires")
+        if expires:
+            expires_ts = time.strptime(expires, "%Y-%m-%dT%H:%M:%SZ")
+            if time.time() > time.mktime(expires_ts):
+                with self._lock:
+                    os.remove(self.lock_file)
+                    self._level = self.LEVEL_NORMAL
+                self._log_event("release", level=self._level, reason="stale lock auto-released")
+
+    def state(self):
+        with self._lock:
+            held = os.path.exists(self.lock_file)
+            lock_contents = None
+            if held:
+                try:
+                    with open(self.lock_file) as f:
+                        lock_contents = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    lock_contents = {}
+            return {
+                "level": self._level,
+                "lock_held": held,
+                "lock": lock_contents,
+                "signals": {
+                    "memory_pressure": "disabled (WP-015)",
+                    "available_memory": "disabled (WP-015)",
+                    "swap_activity": "disabled (WP-015)",
+                    "gpu_utilisation": "disabled (WP-015)",
+                    "priority_processes": "disabled (WP-015)",
+                },
+            }
+
+
+def make_handler(state: LadderState):
+    class Handler(BaseHTTPRequestHandler):
+        def _send_json(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                body = {}
+
+            if self.path == "/yield":
+                state.yield_(
+                    body.get("reason", ""),
+                    body.get("requested_by", "unknown"),
+                    body.get("ttl_seconds"),
+                )
+                self._send_json(202, {"level": state.state()["level"]})
+            elif self.path == "/release":
+                state.release()
+                self._send_json(200, {"level": state.state()["level"]})
+            else:
+                self._send_json(404, {"error": "not found"})
+
+        def do_GET(self):
+            if self.path == "/state":
+                self._send_json(200, state.state())
+            else:
+                self._send_json(404, {"error": "not found"})
+
+        def log_message(self, fmt, *a):
+            pass  # quiet; memwarden's own event log is the record
+
+    return Handler
+
+
+def cmd_daemon(args):
+    state = LadderState(args.lock_file, args.gateway_url, args.unload_path, args.event_log)
+
+    def poll_loop():
+        while True:
+            state.check_stale_lock()
+            time.sleep(args.poll_interval)
+
+    threading.Thread(target=poll_loop, daemon=True).start()
+
+    server = HTTPServer((args.http_host, args.http_port), make_handler(state))
+    print(f"memwarden listening on http://{args.http_host}:{args.http_port}", file=sys.stderr)
+    print(f"lock file: {args.lock_file}", file=sys.stderr)
+    server.serve_forever()
+
+
+def cmd_yield(args):
+    state = LadderState(args.lock_file, args.gateway_url, args.unload_path, args.event_log)
+    state.yield_(args.reason, args.requested_by, args.ttl)
+    print(json.dumps(state.state()))
+
+
+def cmd_release(args):
+    state = LadderState(args.lock_file, args.gateway_url, args.unload_path, args.event_log)
+    state.release()
+    print(json.dumps(state.state()))
+
+
+def cmd_state(args):
+    state = LadderState(args.lock_file, args.gateway_url, args.unload_path, args.event_log)
+    state.check_stale_lock()
+    print(json.dumps(state.state(), indent=2))
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="memwarden")
+    p.add_argument("--lock-file", default=DEFAULT_LOCK_FILE, dest="lock_file")
+    p.add_argument("--gateway-url", default=DEFAULT_GATEWAY_URL, dest="gateway_url")
+    p.add_argument("--unload-path", default=DEFAULT_UNLOAD_PATH, dest="unload_path")
+    p.add_argument("--event-log", default=os.path.expanduser("~/Library/Logs/model-gateway/events.jsonl"), dest="event_log")
+
+    sub = p.add_subparsers(dest="mode", required=True)
+
+    s = sub.add_parser("daemon", help="Run the HTTP + stale-lock-poll daemon")
+    s.add_argument("--http-host", default=DEFAULT_HTTP_HOST, dest="http_host")
+    s.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT, dest="http_port")
+    s.add_argument("--poll-interval", type=float, default=5, dest="poll_interval")
+    s.set_defaults(func=cmd_daemon)
+
+    s = sub.add_parser("yield", help="Request a yield (ladder level 3) via CLI")
+    s.add_argument("--reason", default="")
+    s.add_argument("--requested-by", default=os.environ.get("USER", "cli"), dest="requested_by")
+    s.add_argument("--ttl", type=float, default=None)
+    s.set_defaults(func=cmd_yield)
+
+    s = sub.add_parser("release", help="Release a held yield")
+    s.set_defaults(func=cmd_release)
+
+    s = sub.add_parser("state", help="Print current ladder level, lock, and signal status")
+    s.set_defaults(func=cmd_state)
+
+    return p
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

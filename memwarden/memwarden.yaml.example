@@ -1,0 +1,29 @@
+# Example memwarden config (IF-6). Not yet consumed by memwarden itself --
+# WP-014 drives all settings from CLI flags. This file documents the
+# eventual shape for WP-015 (inferred signals) and WP-016 (tiered TTL),
+# and is the reference the implementing agent should wire a --config flag
+# against when those work packages start. All values below are examples,
+# not defaults baked into code (R13).
+
+lock_file: /tmp/model-gateway.yield
+gateway_url: http://127.0.0.1:8000
+unload_endpoint: /api/models/unload      # «VERIFY: per C4, against the installed llama-swap binary»
+poll_interval_s: 5
+
+signals:
+  memory_pressure:   { enabled: true,  warn_level: 2, critical_level: 4, dwell_s: 15 }
+  available_memory:  { enabled: true,  level1_mb: 10240, level2_mb: 7168, level4_mb: 3072 }
+  swap_activity:     { enabled: true,  swapouts_per_s: 200, dwell_s: 20 }
+  gpu_utilisation:   { enabled: false, threshold_pct: 60, dwell_s: 30, ignore_own_pids: true }
+  priority_processes:
+    enabled: true
+    dwell_s: 5
+    processes:
+      # examples only, not defaults baked into code
+      - { match: "Logic Pro",   min_rss_mb: 2048, level: 3 }
+      - { match: "Final Cut",   min_rss_mb: 2048, level: 3 }
+      - { match: "VaultScribe", min_rss_mb: 512,  level: 3 }
+
+cooldown_s: 120        # signal must stay clear this long before stepping back down
+ttl_reduction_factor: 0.25   # applied to model ttl at ladder level 1 and above (R16)
+event_log: ~/Library/Logs/model-gateway/events.jsonl

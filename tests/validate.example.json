@@ -1,0 +1,9 @@
+{
+  "criteria": [
+    {"name": "peak_physmem_mb", "measured": 27310, "threshold": 29000, "comparator": "<="},
+    {"name": "cold_load_4b_s", "measured": 18, "threshold": 30, "comparator": "<="},
+    {"name": "cold_load_27b_s", "measured": 145, "threshold": 180, "comparator": "<="},
+    {"name": "warm_ttft_delta_ms", "measured": 32, "threshold": 50, "comparator": "<="},
+    {"name": "yield_responsiveness_s", "measured": 14, "threshold": 20, "comparator": "<="}
+  ]
+}
