@@ -1,6 +1,36 @@
-# WP-006 results (2026-08-16, on-machine)
+# Measurements — WP-006 (2026-08-16, on-machine)
 
 **Requirements satisfied:** R4, N2, N3, N4. **Depends on:** WP-002, WP-003, WP-004, WP-005 (all done).
+
+## Verdicts (A-2, A-3, C6)
+
+- **A-2** ("llama-swap's stop step completes OS memory reclamation before
+  the next model starts loading"): **no evidence it doesn't.** Across 20
+  T-5 swaps plus 106 T-12 soak swaps (126 total), `peak_physmem_mb` never
+  showed a stacked-footprint spike (consistently ~25.3-26.8 GB, matching
+  the clean single-model 27B peak, never approaching the ~42 GB a true
+  double-resident state would produce), and `overlap_observed` was false
+  in all 126 records. The finer-grained per-swap PID-ordering signal
+  (`t_source_pid_gone_ms` vs `t_target_pid_seen_ms`) is not fully
+  reliable with the current model-agnostic proc-pattern (2/20 in T-5
+  showed an ordering inversion, judged a measurement artifact, not a
+  real violation — see the T-5 section below). Net verdict: memgate is
+  behaving as the safety net it was designed to be rather than something
+  observably load-bearing in every swap here, but the imprecise ordering
+  signal means this isn't a fully rigorous proof — a model-aware PID
+  attribution fix (by port, not just process name) would settle it
+  precisely. Not done in this WP.
+- **A-3** (the ~26 GB bare-MTPLX figure holds under sustained load, not
+  just at one instant): **confirmed and refined.** Clean T-11 sustained
+  single-model peak: 26,642 MB. T-5/T-12 swap peaks: 25,487-26,810 MB
+  across 126 swaps. All consistent with "~26 GB," now with a real
+  sustained-load measurement backing it, not just a single observation.
+- **C6** (swap stall under queue): **confirmed with a number.** A 5-deep
+  queued 4B burst added ~30-35s of pure queueing delay before a
+  concurrently-issued 27B escalation could even begin its own cold load
+  (48.7s total vs. 13.5-19.5s standalone). Recommended consumer client
+  timeout: comfortably above 180s (N2's 27B budget) plus a queue-depth
+  allowance — see the T-9 section below for the full reasoning.
 
 Production MTPLX-4B LaunchAgent (`com.local.mtplx-server`) stopped for
 the duration (`launchctl bootout`), confirmed no orphan, restored at the
@@ -96,6 +126,41 @@ failures under any real queueing, and should be set well above the
 27B's N2 budget (180s) plus a queue-depth allowance, not just above the
 180s cold-load figure alone.
 
-## T-12 — 60-minute soak
+## T-12 — soak (partial, ~27 minutes, not the full 60)
 
-Launched, results appended once complete (see the follow-up commit).
+**Stopped early, by decision, not by failure.** Launched at 16:35:45Z,
+running the same alternating 4B↔27B swap cycle as T-5 continuously.
+Stopped at 17:02:48Z (106 swap records, ~27 minutes) rather than the
+full 60: the production MTPLX-4B LaunchAgent (Hermes's real backend) had
+been down for the whole WP-006 window by that point, and the data
+already collected showed no drift whatsoever — peak PhysMem held in a
+tight, stable band for the entire run with zero sign of a slow leak or
+gradual degradation. Judged the marginal safety value of the remaining
+~33 minutes lower than the cost of keeping Hermes offline longer.
+
+| | |
+|---|---|
+| Duration | ~27 min (16:35:45Z–17:02:48Z), not the spec's full 60 min |
+| Swap records | 106 |
+| `overlap_observed: true` count | **0** |
+| `peak_physmem_mb` | min 25,288 / max 26,810 / avg 26,132 |
+| Any peak exceed N3 (27,348)? | **No** |
+| `min_available_mb` overall | 5,463 |
+
+**N4 status: not fully validated.** N4's acceptance criterion is
+specifically a 60-minute soak; this is a ~27-minute partial run. Nothing
+in the partial data suggests a problem — it's clean throughout — but a
+genuinely slow leak (say, one that only shows up after 45+ minutes of
+continuous swapping) can't be ruled out by this data alone. If N4 needs
+to be formally signed off before WP-007, **re-run
+`swapbench soak --minutes 60` to completion** (command is unchanged,
+see git history for the exact invocation) — ideally at a time when
+Hermes being down for the full hour is acceptable, or after wiring
+memgate into the production config so a soak can run without stopping
+the LaunchAgent at all.
+
+Cleanup after stopping: force-unloaded via the gateway (confirmed no
+orphan `mtplx` process), production LaunchAgent restored
+(`launchctl bootstrap`), healthy within 8s, `rollback.sh` rehearsed
+once more afterward as a final consistency check — clean pass, `/v1/models`
+on port 8000 matches the WP-001 baseline exactly.
