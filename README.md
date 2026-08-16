@@ -15,7 +15,7 @@ not attempted here. What exists in this repo:
 
 | Path | What it is | Work package | Runnable now? |
 |---|---|---|---|
-| `bin/memgate` | Start-gate wrapper: blocks exec until memory clears a floor | WP-003 | Yes, fully tested (`tests/test_memgate.sh`) |
+| `bin/memgate` ([README](bin/README.md)) | Start-gate wrapper: blocks exec until memory clears a floor | WP-003 | Yes, fully tested (`tests/test_memgate.sh`) |
 | `swapbench/swapbench.py` | Measurement + validation harness | WP-004, WP-017 | Needs a live gateway to point at |
 | `memwarden/memwarden` | Yield lock + degradation ladder core (signals disabled) | WP-014 | Yes, lock/ladder logic tested (`tests/test_memwarden.sh`); unload calls need a live gateway |
 | `warmup/warmup` | Cold-load warmup sidecar | WP-013 | Needs a live gateway to point at |
