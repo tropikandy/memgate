@@ -135,7 +135,13 @@ elapsed=0
 
 while :; do
   if [ -n "$lock_file" ] && [ -e "$lock_file" ]; then
-    log "blocked: yield lock held at $lock_file"
+    lock_reason=""
+    lock_requested_by=""
+    if lock_contents="$(cat "$lock_file" 2>/dev/null)"; then
+      lock_reason="$(printf '%s' "$lock_contents" | grep -oE '"reason"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+      lock_requested_by="$(printf '%s' "$lock_contents" | grep -oE '"requested_by"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+    fi
+    log "blocked: yield lock held at $lock_file (reason: ${lock_reason:-unspecified}, requested_by: ${lock_requested_by:-unknown})"
   else
     mem_line="$(read_memory_mb)" || { sleep "$poll_s"; elapsed=$(( $(date +%s) - start_ts )); if [ "$elapsed" -ge "$timeout_s" ]; then log "timed out after ${elapsed}s: memory reader unavailable"; exit 75; fi; continue; }
     available_mb="${mem_line% *}"
