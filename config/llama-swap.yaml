@@ -1,12 +1,12 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
 #
-# WP-002 scratch config: 4B only, listening on 127.0.0.1:8801 (IF-1), memgate
-# macro empty (memgate joins in a later WP). All values below are filled from
-# the real WP-001 capture (docs/baseline/mtplx-argv.txt, models.json, and the
-# com.local.mtplx-server.plist), not invented -- no «VERIFY» markers remain
-# in this file. Port 8000 / the live MTPLX-4B LaunchAgent are untouched
-# throughout this WP (C1/WP-002 scope-out): this file proves the mechanism
-# on a scratch port only.
+# WP-002/WP-005 scratch config: listening on 127.0.0.1:8801 (IF-1), memgate
+# macro still empty (memgate joins at WP-006). All values below are filled
+# from real captures (docs/baseline/mtplx-argv.txt for the 4B, WP-001;
+# docs/baseline/27b-argv.txt for the 27B, WP-005) -- no «VERIFY» markers
+# remain in this file. Port 8000 / the live MTPLX-4B LaunchAgent are
+# untouched throughout WP-002/WP-005 (C1 scope-out): this file proves the
+# mechanism on a scratch port only, cutover to 8000 is WP-007.
 #
 # Run: llama-swap -config config/llama-swap.yaml -listen 127.0.0.1:8801
 
@@ -63,5 +63,91 @@ models:
     # available to this session -- if it sends a different model string,
     # add it here before cutover (R5/T-13).
 
-# 27B entry and the mtplx-exclusive group join at WP-005/WP-006, once the
-# 27B launch command is captured live and this file is no longer scratch-only.
+  # ---- escalation tier ----------------------------------------------------
+  # Flags below are the real 27B argv, captured 2026-08-16 from a standalone
+  # run on scratch port 18027, docs/baseline/27b-argv.txt (WP-005). Only
+  # --host/--port were changed (18027 -> ${PORT}); everything else verbatim,
+  # per C5/the "copied verbatim, not tuned" constraint. Confirmed --generation-mode
+  # mtp --depth 3 are both present: "bare" in Bare-Speed does not mean "no MTP".
+  "mtplx-qwen38-27b-bare-speed":
+    cmd: >
+      ${memgate}
+      "${mtplx_python}" -m ${mtplx_module}
+      --model /Volumes/2tb/Models/mtplx/Youssofal--Qwen3.8-27B-MTPLX-Bare-Speed
+      --backend-id qwen3_next
+      --host 127.0.0.1 --port ${PORT}
+      --depth 3
+      --generation-mode mtp
+      --profile sustained
+      --reasoning-mode auto
+      --preserve-thinking auto
+      --verify-strategy capture_commit
+      --verify-core linear-gdn-from-conv-tape
+      --draft-lm-head-bits 4
+      --draft-lm-head-group-size 64
+      --draft-lm-head-mode affine
+      --rate-limit 0
+      --stream-interval 1
+      --scheduler-mode ar_batch
+      --batching-preset agent
+      --mtp-batch-numerics throughput
+      --warmup-tokens 16
+      --model-id mtplx-qwen38-27b-bare-speed
+      --paged-kv-quantization off
+      --fan-mode default
+      --max-active-requests 1
+      --decode-batch-max 2
+      --batch-wait-ms 50.0
+      --prefill-chunk-tokens 2048
+      --retrieval-max-resident 2
+      --context-window 131072
+      --experimental-mtp-cohorts
+      --ssd-session-cache on
+      --ssd-session-cache-max-size auto
+      --ssd-session-cache-min-prefix-tokens 512
+      --adaptive-policy expected_value
+      --adaptive-min-depth 1
+      --adaptive-ev-base-depth 2
+      --adaptive-ev-accept-priors 0.92,0.64,0.32
+      --adaptive-ev-draft-cost-s 0.0048
+      --adaptive-ev-extra-verify-cost-s 0.006
+      --adaptive-ev-baseline-tok-s 40.0
+      --adaptive-ev-safety-margin 0.1
+      --adaptive-ev-margin-center 1.0
+      --adaptive-ev-margin-scale 2.0
+      --adaptive-ev-confidence-weight 0.35
+      --adaptive-ev-min-extra-accept-probability 0.18
+      --adaptive-ev-warmup-full-depth-cycles 4
+      --adaptive-ev-exploration-interval 32
+      --draft-temperature 0.6
+      --draft-top-p 0.95
+      --draft-top-k 20
+      --tool-prompt-mode hybrid
+      --chat-template-profile local_qwen36
+      --temperature 1.0
+      --top-p 0.95
+      --top-k 20
+      --reasoning-parser qwen3
+      --reasoning-effort medium
+      --no-stats-footer
+    proxy: "http://127.0.0.1:${PORT}"
+    checkEndpoint: /v1/models
+    ttl: 300          # shorter than the 4B: this is the memory hog, return to safe state sooner
+    unloadTimeout: 45 # larger model, more teardown -- let --ssd-session-cache flush (C5)
+
+groups:
+  # Redundant with llama-swap's default one-at-a-time behaviour, but stated
+  # explicitly: this line is the machine-readable form of R4, and the reason
+  # the 2026-08-04 panic shape cannot recur.
+  mtplx-exclusive:
+    swap: true
+    exclusive: true
+    members:
+      - "mtplx-qwen35-4b-optimized-quality"
+      - "mtplx-qwen38-27b-bare-speed"
+
+# memgate joins at WP-006 (macro above goes from "" to the WP-003 binary
+# with --require-free-mb set from docs/baseline/n3-ceiling-derivation.md),
+# and the production MTPLX-4B LaunchAgent must be stopped before that WP's
+# tests run -- see docs/wp002-wp004-results.md for why (a real, measured
+# false-overlap effect otherwise).
