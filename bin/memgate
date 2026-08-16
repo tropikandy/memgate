@@ -18,16 +18,24 @@ usage: $prog [options] -- <command> [args...]
                          refuses with a reason naming the lock. Unset by
                          default (no lock check).
   --log PATH             Append log destination. Default stderr.
+  --preexec-cmd CMD      Optional command run in the background (not
+                         awaited) immediately before exec, e.g. to launch
+                         a warmup sidecar (IF-7). Failures are logged and
+                         never block exec. Pass as a single argument (one
+                         shell word); callers that can't invoke memgate
+                         through a shell (e.g. llama-swap's cmd field,
+                         which fork/execs argv directly rather than going
+                         through /bin/sh -c) should quote the whole
+                         command as one argument, not rely on env-var
+                         prefix syntax -- that requires a shell and will
+                         silently fail as a bad exec target otherwise.
   --dry-run              Report the decision and exit without exec.
 
 Env overrides: MEMGATE_REQUIRE_FREE_MB, MEMGATE_TIMEOUT, MEMGATE_POLL,
-MEMGATE_METRIC, MEMGATE_LOCK_FILE, MEMGATE_READER_CMD (test hook: a command
-whose stdout is parsed exactly like 'vm_stat', used to stub the memory
-reader in tests instead of reading real system state).
-
-Optional pre-exec hook: MEMGATE_PREEXEC_CMD, an arbitrary command run in
-the background (not awaited) immediately before exec, e.g. to launch a
-warmup sidecar (IF-7). Failures are logged and never block exec.
+MEMGATE_METRIC, MEMGATE_LOCK_FILE, MEMGATE_PREEXEC_CMD (same as
+--preexec-cmd, for callers that do go through a shell), MEMGATE_READER_CMD
+(test hook: a command whose stdout is parsed exactly like 'vm_stat', used
+to stub the memory reader in tests instead of reading real system state).
 
 Exit codes: child's exit code on success (via exec), 75 on timeout,
 64 on bad usage.
@@ -84,6 +92,7 @@ timeout_s="${MEMGATE_TIMEOUT:-180}"
 poll_s="${MEMGATE_POLL:-2}"
 metric="${MEMGATE_METRIC:-available}"
 lock_file="${MEMGATE_LOCK_FILE:-}"
+preexec_cmd="${MEMGATE_PREEXEC_CMD:-}"
 LOG_PATH=""
 dry_run=0
 
@@ -96,6 +105,7 @@ while [ $# -gt 0 ]; do
     --metric) metric="$2"; shift 2 ;;
     --lock-file) lock_file="$2"; shift 2 ;;
     --log) LOG_PATH="$2"; shift 2 ;;
+    --preexec-cmd) preexec_cmd="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --help|-h) usage; exit 0 ;;
     --) shift; args=("$@"); break ;;
@@ -139,8 +149,8 @@ while :; do
         echo "clear"
         exit 0
       fi
-      if [ -n "${MEMGATE_PREEXEC_CMD:-}" ]; then
-        ( eval "$MEMGATE_PREEXEC_CMD" >>"${LOG_PATH:-/dev/stderr}" 2>&1 & )
+      if [ -n "$preexec_cmd" ]; then
+        ( eval "$preexec_cmd" >>"${LOG_PATH:-/dev/stderr}" 2>&1 & )
       fi
       exec "${args[@]}"
     fi

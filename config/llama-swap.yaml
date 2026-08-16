@@ -37,8 +37,14 @@ macros:
   # for. 4B: ~7.8GB measured (T-11, WP-006) + 2GB margin = 9856 -> 10240.
   # 27B: ~17.4GB measured (contaminated, WP-005) + 2GB margin = 19456 ->
   # 20480, revisit once WP-006's clean single-model 27B number lands.
-  memgate_4b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 10240 --timeout 180 --"
-  memgate_27b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 20480 --timeout 180 --"
+  # No trailing "--" here -- each model's cmd below adds --preexec-cmd
+  # "..." (WP-013 warmup sidecar, IF-7) before its own trailing "--".
+  # llama-swap's cmd field does NOT go through a shell (it fork/execs
+  # argv directly), so a VAR=value shell-style env prefix silently fails
+  # as a bad exec target -- memgate takes --preexec-cmd as a real flag
+  # instead (found and fixed while wiring this up).
+  memgate_4b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 10240 --timeout 180"
+  memgate_27b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 20480 --timeout 180"
 
 models:
 
@@ -48,6 +54,8 @@ models:
   "mtplx-qwen35-4b-optimized-quality":
     cmd: >
       ${memgate_4b}
+      --preexec-cmd "/Users/andreaslarsson/memgate/warmup/warmup --health-url http://127.0.0.1:${PORT}/v1/models --completion-url http://127.0.0.1:${PORT}/v1/chat/completions --model mtplx-qwen35-4b-optimized-quality"
+      --
       "${mtplx_python}" -m ${mtplx_module}
       --model /Volumes/2tb/Models/mtplx/Youssofal--Qwen3.5-4B-MTPLX-Optimized-Quality
       --backend-id qwen3_next
@@ -83,6 +91,8 @@ models:
   "mtplx-qwen38-27b-bare-speed":
     cmd: >
       ${memgate_27b}
+      --preexec-cmd "/Users/andreaslarsson/memgate/warmup/warmup --health-url http://127.0.0.1:${PORT}/v1/models --completion-url http://127.0.0.1:${PORT}/v1/chat/completions --model mtplx-qwen38-27b-bare-speed"
+      --
       "${mtplx_python}" -m ${mtplx_module}
       --model /Volumes/2tb/Models/mtplx/Youssofal--Qwen3.8-27B-MTPLX-Bare-Speed
       --backend-id qwen3_next
