@@ -26,6 +26,7 @@ struct MenuBarLabelView: View {
 
 struct MenuContentView: View {
     @ObservedObject var client: GatewayClient
+    @Environment(\.openSettings) private var openSettings
     @State private var showRestartConfirm = false
     @State private var restarting = false
 
@@ -108,6 +109,24 @@ struct MenuContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(restarting)
+
+            Divider()
+
+            Button {
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "gearshape")
+                        .frame(width: 14)
+                    Text("Settings…").font(.system(size: 13))
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
             Divider()
 

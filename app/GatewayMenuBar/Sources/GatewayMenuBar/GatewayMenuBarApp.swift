@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let client = GatewayClient()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        GatewayAppSettings.registerDefaults()
         client.start()
     }
 }
@@ -25,5 +26,13 @@ struct GatewayMenuBarApp: App {
             MenuBarLabelView(client: appDelegate.client)
         }
         .menuBarExtraStyle(.window)
+
+        // A real macOS Settings scene -- LSUIElement apps have no app
+        // menu/Cmd+, by default, so MenuContentView opens this explicitly
+        // (activating the app first; an accessory app's windows don't
+        // come forward on their own the way a regular app's would).
+        Settings {
+            SettingsView(client: appDelegate.client)
+        }
     }
 }

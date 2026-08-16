@@ -43,6 +43,24 @@ enum ResidentModel: Equatable {
     }
 }
 
+enum GatewayAppSettings {
+    static let gatewayURLKey = "gatewayURL"
+    static let wardenURLKey = "wardenURL"
+    static let pollIntervalKey = "pollInterval"
+
+    static let defaultGatewayURL = "http://127.0.0.1:8000"
+    static let defaultWardenURL = "http://127.0.0.1:8011"
+    static let defaultPollInterval: Double = 5
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [
+            gatewayURLKey: defaultGatewayURL,
+            wardenURLKey: defaultWardenURL,
+            pollIntervalKey: defaultPollInterval,
+        ])
+    }
+}
+
 @MainActor
 final class GatewayClient: ObservableObject {
     @Published var resident: ResidentModel = .none
@@ -51,13 +69,31 @@ final class GatewayClient: ObservableObject {
     @Published var lockReason: String?
     @Published var reachable: Bool = false
 
-    private let gatewayBase = URL(string: "http://127.0.0.1:8000")!
-    private let wardenBase = URL(string: "http://127.0.0.1:8011")!
+    private var gatewayBase: URL {
+        URL(string: UserDefaults.standard.string(forKey: GatewayAppSettings.gatewayURLKey) ?? GatewayAppSettings.defaultGatewayURL)
+            ?? URL(string: GatewayAppSettings.defaultGatewayURL)!
+    }
+    private var wardenBase: URL {
+        URL(string: UserDefaults.standard.string(forKey: GatewayAppSettings.wardenURLKey) ?? GatewayAppSettings.defaultWardenURL)
+            ?? URL(string: GatewayAppSettings.defaultWardenURL)!
+    }
+    private var pollInterval: Double {
+        let v = UserDefaults.standard.double(forKey: GatewayAppSettings.pollIntervalKey)
+        return v > 0 ? v : GatewayAppSettings.defaultPollInterval
+    }
     private var timer: Timer?
 
     func start() {
         Task { await refresh() }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        restartTimer()
+    }
+
+    /// Call after settings change so a new poll interval (or new URLs,
+    /// picked up lazily via the computed properties above) takes effect
+    /// without requiring the app to be quit and relaunched.
+    func restartTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
     }
