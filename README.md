@@ -1,50 +1,68 @@
 # Local Model Gateway
 
-One OpenAI-compatible endpoint for local MTPLX models, gatewayed through
-[llama-swap](https://github.com/mostlygeek/llama-swap) with memory-safe
-on-demand loading. Full design: `docs/Local-Model-Gateway-Build-Spec.md`.
+One OpenAI-compatible endpoint for local LLMs, running on demand instead
+of sitting resident in memory all the time. A request naming a model
+gets it loaded, health-checked, and proxied to; the model unloads again
+after it's been idle, and a start-gate refuses to load anything until
+there's actually enough free memory for it — so switching between a
+small fast model and a large one never risks the OS thrashing or a
+memory-pressure crash from two big models loaded at once.
 
-## Status
+Built around [llama-swap](https://github.com/mostlygeek/llama-swap)
+(adopted as-is, unmodified) as the gateway, with a handful of small,
+dependency-free companion tools that llama-swap alone doesn't provide.
 
-This repository was scaffolded from a cold start in a remote/cloud
-execution environment with **no access to the target Mac mini**. Most of
-the spec's work packages (WP-001, WP-002, WP-005 through WP-012) require
-commands run directly on that machine against real MTPLX processes, a
-real `~/.hermes/config.yaml`, `launchctl`, and a real reboot. Those are
-not attempted here. What exists in this repo:
+## What's in here
 
-| Path | What it is | Work package | Runnable now? |
-|---|---|---|---|
-| `bin/memgate` ([README](bin/README.md)) | Start-gate wrapper: blocks exec until memory clears a floor | WP-003 | Yes, fully tested (`tests/test_memgate.sh`) |
-| `swapbench/swapbench.py` | Measurement + validation harness | WP-004, WP-017 | Needs a live gateway to point at |
-| `memwarden/memwarden` | Yield lock + degradation ladder core (signals disabled) | WP-014 | Yes, lock/ladder logic tested (`tests/test_memwarden.sh`); unload calls need a live gateway |
-| `warmup/warmup` | Cold-load warmup sidecar | WP-013 | Needs a live gateway to point at |
-| `config/llama-swap.yaml.template` | IF-5 config, every value marked `«VERIFY»` | — | Template only; fill from WP-001/WP-005 captures |
-| `memwarden/memwarden.yaml.example` | IF-6 config shape for WP-015/WP-016 | — | Reference only, not yet consumed |
-| `scripts/baseline-capture.sh` | WP-001 steps 1-2 capture script | WP-001 | **Run this on the Mac mini next**, before touching anything else |
-| `scripts/rollback.sh` | R12/T-15 one-command rollback | WP-001 step 4 | Run on the Mac mini; requires `docs/baseline/` to exist first |
+| Component | Role |
+|---|---|
+| **llama-swap** | The gateway itself. Owns the well-known port, starts/stops backend model processes, proxies requests, enforces one-model-at-a-time. Not part of this repo — installed separately. |
+| [`memgate`](bin/README.md) | A tiny start-gate wrapper. Refuses to launch a model process until measured free memory actually clears a floor (and an optional yield lock, if held, blocks it too). Sits in front of llama-swap's launch command for each model. |
+| `memwarden` | A small daemon that owns an explicit "yield" mechanism: any process — no client library needed — can create a lock file to tell the gateway to drain and unload everything right now and refuse new loads, then remove it to resume normal service. Also exposes the same over HTTP and a CLI. |
+| `warmup` | A cold-load sidecar. Fires a throwaway completion against a model right after it starts, in the background, so the *first real* request doesn't pay Metal/CUDA kernel-compilation cost. |
+| `swapbench` | A measurement and validation harness — times cold loads, swaps between models while sampling memory and process state, and can run a fixed pass/fail suite against a live install. |
+| [`app/GatewayMenuBar`](app/GatewayMenuBar/README.md) | An optional native macOS menu bar app: live status at a glance, pause/resume model loading, restart the gateway. Talks to the gateway and memwarden over plain HTTP, nothing special. |
 
-## What to run on the Mac mini next
+All of the above (except the menu bar app, which is Swift) are bash or
+Python 3 stdlib only — no third-party dependencies anywhere.
 
-1. `scripts/baseline-capture.sh` -- captures `/v1/models`, the MTPLX
-   argv, LaunchAgent plists, port inventory, `iogpu.wired_limit_mb`, and
-   the Hermes config hash into `docs/baseline/`. This closes WP-001 step 1.
-   WP-001 step 4 is `scripts/rollback.sh`, already written and waiting on
-   `docs/baseline/` existing.
-2. By hand, per the script's printed instructions: stop all model
-   processes, wait 60s, sample `vm_stat` three times, and write the
-   median into `docs/baseline/memory-floor.json` (WP-001 step 2). Derive
-   the N3 ceiling from that floor plus the largest single-model footprint
-   plus a stated safety margin.
-3. Dry-run `scripts/rollback.sh` (T-15) so it's rehearsed before anything
-   is changed for real.
-4. Install `bin/memgate` to `/usr/local/bin/memgate` (or point the
-   `memgate` macro in `config/llama-swap.yaml.template` at wherever it
-   lives in this checkout).
-5. Continue with WP-002 (llama-swap on a scratch port, 4B only) per the
-   spec -- independent of the 27B command capture (C2).
+## Why
 
-## Running the tests that don't need the Mac mini
+Running two large local models resident at once on a single machine
+with unified/shared memory is a real way to crash it, not a
+hypothetical — that's the whole reason this exists. The gateway itself
+(llama-swap) guarantees only one model process runs at a time, but the
+OS doesn't necessarily reclaim the outgoing model's memory before the
+next one starts loading, and nothing coordinates with *other* memory
+pressure on the machine (another app, a browser with too many tabs,
+whatever). `memgate` and `memwarden` are the two pieces that close that
+gap: one refuses to load until there's room, the other gives every other
+app on the machine a zero-effort way to say "not right now."
+
+## Getting started
+
+1. Install llama-swap (a release binary or `brew install
+   mostlygeek/llama-swap/llama-swap` both work).
+2. Write a config for your own models — see `config/llama-swap.yaml.template`
+   for the shape (every value marked `«VERIFY»` needs filling in from
+   your own setup: model paths, ports, the exact model ID your existing
+   consumers already send, so nothing on the client side has to change).
+3. Point `memgate` at each model's launch command (see the template),
+   set a `--require-free-mb` floor sized to that model's real memory
+   footprint plus a safety margin.
+4. Optionally wire in `memwarden` (`memwarden/memwarden.yaml.example`
+   documents the config shape) and the `warmup` sidecar.
+5. Run `swapbench --validate` against the live gateway to get a
+   pass/fail readout instead of just hoping it works.
+
+`docs/Local-Model-Gateway-Build-Spec.md` is the full design doc —
+requirements, interfaces, the memory-arbitration design, and the test
+plan this was built and validated against. `docs/measurements.md` and
+the other `docs/wp0*-results.md` files are the engineering log from
+building and validating this against a real deployment: real bugs
+found, real numbers measured, not just what was planned.
+
+## Running the tests
 
 ```
 bash tests/test_memgate.sh
@@ -54,15 +72,21 @@ python3 swapbench/swapbench.py validate --config tests/validate.example.json
 
 ## Design constraints this code follows
 
-- Bash or Python 3 stdlib only, no third-party dependencies.
-- No hardcoded paths, ports, model IDs, or process names outside
-  overridable defaults and documentation examples (R13). Verify with:
+- Bash or Python 3 stdlib only, no third-party dependencies (the menu
+  bar app is the one exception — native Swift/SwiftUI, see its own
+  README).
+- No hardcoded paths, ports, model IDs, or process names in `memgate`,
+  `memwarden`, or `swapbench` outside overridable defaults and
+  documentation examples. Verify with:
   `grep -nE '/Volumes|andreas|8000|mtplx' bin/memgate memwarden/memwarden swapbench/swapbench.py warmup/warmup`
-- `memgate` hands off with `exec`, never fork/wait (IF-3, T-6) -- this is
-  what prevents an orphaned, fully-loaded MTPLX process surviving a
-  llama-swap SIGTERM.
-- `memwarden`'s WP-014 scope ships with every inferred signal disabled;
-  only the explicit lock (file, HTTP, CLI) drives the ladder. Inferred
-  signals are WP-015, and should not be added here until Phase 1 has run
-  for a normal working week on the real machine (see the spec's Section
-  13 handoff prompt).
+  (an empty result is the point — these are generic tools, not tied to
+  any one deployment).
+- `memgate` hands off with `exec`, never fork/wait — this is what
+  prevents an orphaned, fully-loaded model process surviving a
+  supervisor's `SIGTERM` to the wrapper instead of the real workload.
+- `memwarden` ships with every *inferred* pressure signal (memory
+  pressure level, GPU utilization, priority-process detection) off by
+  default. Only the explicit lock — file, HTTP, or CLI — drives it out
+  of the box. Inferred signals are a deliberate, separate opt-in, meant
+  to be tuned from real observed behavior on your machine rather than
+  guessed at.

@@ -5,7 +5,7 @@
 ## What was done
 
 1. Started the 27B (`mtplx-qwen38-27b-bare-speed`) standalone, mirroring
-   Andreas's original bare-test command exactly except for `--host`/
+   the operator's original bare-test command exactly except for `--host`/
    `--port` (moved to a scratch port, 18027, so it could not collide with
    or disrupt the production 4B on 8000). Full capture:
    `docs/baseline/27b-argv.txt` (gitignored, local-only, like the rest of

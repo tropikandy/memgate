@@ -1,7 +1,7 @@
 # Local Model Gateway — Build Spec
 
-**Status:** ready for implementation. Nothing deployed yet.
-**Target machine:** Andreas's Mac mini (M4, 32 GB unified memory). Single machine, no second box.
+**Status:** implemented and deployed (Phase 1 complete, see Section 9's session notes for what's done).
+**Target machine:** a single Mac mini (M4, 32 GB unified memory). Single machine, no second box.
 **Derived from:** `Local-Model-Gateway-Research-Brief.md` (research and decisions, superseded by this document for anything that conflicts).
 
 Conventions used here:
