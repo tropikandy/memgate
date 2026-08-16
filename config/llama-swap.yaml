@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+#
+# WP-002 scratch config: 4B only, listening on 127.0.0.1:8801 (IF-1), memgate
+# macro empty (memgate joins in a later WP). All values below are filled from
+# the real WP-001 capture (docs/baseline/mtplx-argv.txt, models.json, and the
+# com.local.mtplx-server.plist), not invented -- no «VERIFY» markers remain
+# in this file. Port 8000 / the live MTPLX-4B LaunchAgent are untouched
+# throughout this WP (C1/WP-002 scope-out): this file proves the mechanism
+# on a scratch port only.
+#
+# Run: llama-swap -config config/llama-swap.yaml -listen 127.0.0.1:8801
+
+# Generous: covers a cold 27B load from external SSD (N2). Minimum accepted is 15.
+healthCheckTimeout: 300
+
+# Internal backend ports allocated from here upward by ${PORT}. Confirmed
+# free in the WP-001 lsof capture (docs/baseline/listening-ports.txt).
+startPort: 9200
+
+logLevel: info
+
+macros:
+  # Quoted at every use site below ("${mtplx_python}") -- this path contains
+  # a space ("Application Support") and llama-swap's cmd field splits on
+  # whitespace, so an unquoted reference fails to exec (found during WP-002).
+  mtplx_python: "/Users/andreaslarsson/Library/Application Support/MTPLX/runtime-venv/bin/python"
+  mtplx_module: "mtplx.server.openai"
+  # WP-002 scope-out: memgate is not wired in yet. Empty string, not the
+  # WP-003 binary -- this WP proves llama-swap's own mechanism in isolation.
+  memgate: ""
+
+models:
+
+  # ---- fast tier ---------------------------------------------------------
+  # Flags below are the real 4B steady-state argv, captured 2026-08-16 from
+  # PID 64781 (com.local.mtplx-server), docs/baseline/mtplx-argv.txt.
+  "mtplx-qwen35-4b-optimized-quality":
+    cmd: >
+      ${memgate}
+      "${mtplx_python}" -m ${mtplx_module}
+      --model /Volumes/2tb/Models/mtplx/Youssofal--Qwen3.5-4B-MTPLX-Optimized-Quality
+      --backend-id qwen3_next
+      --host 127.0.0.1 --port ${PORT}
+      --model-id mtplx-qwen35-4b-optimized-quality
+      --profile sustained
+      --generation-mode mtp
+      --depth 3
+      --context-window 131072
+      --paged-kv-quantization q8
+      --ssd-session-cache on
+      --scheduler-mode serial
+      --batching-preset latency
+      --max-active-requests 1
+      --reasoning-mode auto
+      --preserve-thinking auto
+      --agent-thinking-budget auto
+    proxy: "http://127.0.0.1:${PORT}"
+    checkEndpoint: /v1/models
+    ttl: 900          # 15 min. Fast tier is the common path, keep it warm longer.
+    unloadTimeout: 30 # let --ssd-session-cache flush before force-kill (C5)
+    # No other id string was found in ~/.hermes/config.yaml (the only
+    # consumer config captured so far). Conductor's config was not
+    # available to this session -- if it sends a different model string,
+    # add it here before cutover (R5/T-13).
+
+# 27B entry and the mtplx-exclusive group join at WP-005/WP-006, once the
+# 27B launch command is captured live and this file is no longer scratch-only.

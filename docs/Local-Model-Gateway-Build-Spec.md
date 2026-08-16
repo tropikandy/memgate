@@ -193,16 +193,22 @@ Base URL: `http://127.0.0.1:8000` (post-cutover), `http://127.0.0.1:8801` (durin
 
 ### IF-2: Gateway management surface (operator-facing)
 
-All paths `«VERIFY: against the installed binary»`. Expected shape:
+**Verified against the installed binary, `llama-swap v250 (60226b6)`, WP-002, 2026-08-16.** Probed with an empty `models: {}` config on a scratch port; `/upstream/{id}` and `/api/models/unload/{id}` return 404 in that probe only because no real model id was registered, not because the route is wrong.
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/models/unload` | Unload everything now. |
-| POST | `/api/models/unload/{id}` | Unload one model. |
-| GET | `/api/events` | SSE stream of state changes, logs, in-flight counts. |
-| GET | `/api/metrics` | Token and request metrics. |
-| GET | `/upstream/{id}` | Force-load a model without sending a completion. |
-| GET | `/logs` | Recent log tail. |
+| Method | Path | Purpose | Confirmed |
+|---|---|---|---|
+| POST | `/api/models/unload` | Unload everything now. | 200 |
+| POST | `/api/models/unload/{id}` | Unload one model. | route exists (405 on wrong method, 404 on unknown id) |
+| GET | `/api/events` | SSE stream of state changes, logs, in-flight counts. | 200 |
+| GET | `/api/metrics/activity` | Paginated request/activity log, **not** a bare `/api/metrics` as originally assumed. | 200, JSON `{data, page, limit, total, total_pages}` |
+| GET | `/api/performance` | Additional performance metrics, not in the original spec draft. | 200 |
+| GET | `/api/version` | Build info: `{build_date, commit, version}`. Not in the original spec draft. | 200 |
+| GET | `/upstream/{id}` | Force-load a model without sending a completion. | route exists, full test deferred to WP-005/WP-006 with a real id |
+| GET | `/logs` | Recent log tail. | 200 |
+| GET | `/logs/stream` | SSE-tail of logs, separate from the bare `/logs` snapshot. | 200 |
+| GET | `/ui` | Built-in web UI (redirect), not in the original spec draft. | 307 |
+
+`/api/metrics` (bare) does **not** exist on this version — 404. Anything reading "token and request metrics" should use `/api/metrics/activity`.
 
 ### IF-3: memgate CLI
 
@@ -289,3 +295,5 @@ See Section 8 of the original research spec for the full T-1 through T-28 table 
 Full text (work packages WP-001 through WP-018, dependency graph, traceability matrix, decisions D-1 through D-11, open assumptions A-1 through A-11, rollback procedure, agent handoff prompt) is authoritative in the original spec message and should be treated as unchanged from what's summarized in Sections 1-8 above. Implementers: keep this file as the living reference and update `«VERIFY»` markers, IF-2, and the assumptions table in place as each WP resolves an unknown — do not fork a second copy of the spec.
 
 **Session note (2026-08-16):** this repository was scaffolded from a cold start (no prior commits) by an agent running in a cloud/remote execution environment with no access to the target Mac mini. WP-001 (baseline capture), WP-002 (live llama-swap standing up against real MTPLX), WP-005 (27B argv capture), WP-006 (live swap measurement), WP-007 (cutover), and WP-008 (LaunchAgent + reboot test) all require commands run *on that machine* (`launchctl`, `ps` against real MTPLX processes, `vm_stat` floor sampling, a real Hermes config hash, an actual reboot). Those cannot be completed from here. What this session delivers instead: the generic, hardware-independent code for memgate (WP-003), swapbench (WP-004), the memwarden lock-and-ladder core (WP-014, signals disabled per that WP's own scope-out), the warmup sidecar (WP-013), the IF-5 config template with every value left as `«VERIFY»`, and the WP-001 baseline-capture script ready to run on the Mac mini. See `docs/README.md` for exact next steps to run on-machine.
+
+**Session note (2026-08-16, on-machine):** a second session, running directly on the Mac mini, completed WP-001 (see `docs/baseline/`, gitignored/local-only), WP-002 (`config/llama-swap.yaml`, scratch port 8801, T-1/T-2/T-3 all passed), and WP-003 (memgate re-verified with `tests/test_memgate.sh` on real hardware). Two unknowns resolved: **A-5** (host/port CLI flags) confirmed true — MTPLX accepts `--host`/`--port` directly, no config-file wrapper needed. **A-7** (management routes under `/api/...`) confirmed true, with corrections — see the updated IF-2 table above; several routes differ from the original draft (`/api/metrics/activity` not `/api/metrics`, plus `/api/performance`, `/api/version`, `/logs/stream`, `/ui` not previously listed). One new gotcha found and fixed: llama-swap's `cmd` field splits on whitespace, so the MTPLX interpreter path (`.../Application Support/...`, which contains a space) must be quoted at every macro use site — see the comment in `config/llama-swap.yaml`. llama-swap itself: installed from the GitHub release binary (`mostlygeek/llama-swap` v250, darwin_arm64) to `~/.local/bin/llama-swap`, not `/usr/local/bin` (no passwordless sudo available in this environment; `~/.local/bin` is already on `$PATH`).

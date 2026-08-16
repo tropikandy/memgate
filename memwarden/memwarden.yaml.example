@@ -7,7 +7,7 @@
 
 lock_file: /tmp/model-gateway.yield
 gateway_url: http://127.0.0.1:8000
-unload_endpoint: /api/models/unload      # «VERIFY: per C4, against the installed llama-swap binary»
+unload_endpoint: /api/models/unload      # confirmed against llama-swap v250, WP-002 (POST -> 200, IF-2)
 poll_interval_s: 5
 
 signals:
