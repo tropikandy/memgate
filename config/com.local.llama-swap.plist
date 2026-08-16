@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.local.llama-swap</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/andreaslarsson/.local/bin/llama-swap</string>
+		<string>-config</string>
+		<string>/Users/andreaslarsson/memgate/config/llama-swap.yaml</string>
+		<string>-listen</string>
+		<string>127.0.0.1:8000</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>ExitTimeOut</key>
+	<integer>20</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/andreaslarsson/Library/Logs/llama-swap.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/andreaslarsson/Library/Logs/llama-swap.log</string>
+</dict>
+</plist>
