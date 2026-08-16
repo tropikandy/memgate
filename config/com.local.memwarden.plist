@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.local.memwarden</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>/Users/andreaslarsson/memgate/memwarden/memwarden</string>
+		<string>--lock-file</string>
+		<string>/tmp/model-gateway.yield</string>
+		<string>--gateway-url</string>
+		<string>http://127.0.0.1:8000</string>
+		<string>--unload-path</string>
+		<string>/api/models/unload</string>
+		<string>--event-log</string>
+		<string>/Users/andreaslarsson/Library/Logs/model-gateway/events.jsonl</string>
+		<string>daemon</string>
+		<string>--http-host</string>
+		<string>127.0.0.1</string>
+		<string>--http-port</string>
+		<string>8011</string>
+		<string>--poll-interval</string>
+		<string>5</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>WorkingDirectory</key>
+	<string>/Users/andreaslarsson/memgate</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/andreaslarsson</string>
+		<key>USER</key>
+		<string>andreaslarsson</string>
+		<key>PATH</key>
+		<string>/Users/andreaslarsson/.mtplx/bin:/Users/andreaslarsson/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>ExitTimeOut</key>
+	<integer>20</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/andreaslarsson/Library/Logs/memwarden.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/andreaslarsson/Library/Logs/memwarden.log</string>
+</dict>
+</plist>

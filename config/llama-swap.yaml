@@ -43,8 +43,11 @@ macros:
   # argv directly), so a VAR=value shell-style env prefix silently fails
   # as a bad exec target -- memgate takes --preexec-cmd as a real flag
   # instead (found and fixed while wiring this up).
-  memgate_4b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 10240 --timeout 180"
-  memgate_27b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 20480 --timeout 180"
+  # WP-014: --lock-file checked before the memory floor (IF-3's own
+  # ordering) -- memwarden's yield lock, or any process that just
+  # touches this path, blocks new loads with a clear reason.
+  memgate_4b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 10240 --timeout 180 --lock-file /tmp/model-gateway.yield"
+  memgate_27b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 20480 --timeout 180 --lock-file /tmp/model-gateway.yield"
 
 models:
 

@@ -16,15 +16,19 @@ pass=1
 
 echo "=== rollback: $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
-echo "--- step 1: stop llama-swap (and its LaunchAgent if present) ---"
-if launchctl list 2>/dev/null | grep -qi llama-swap; then
-  label=$(launchctl list | grep -i llama-swap | awk '{print $3}' | head -1)
-  echo "unloading llama-swap LaunchAgent: $label"
-  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || launchctl unload "$HOME/Library/LaunchAgents/${label}.plist" 2>/dev/null || true
-else
-  echo "no llama-swap LaunchAgent found (may be running unmanaged)"
-fi
+echo "--- step 1: stop llama-swap and memwarden (and their LaunchAgents if present) ---"
+for svc in llama-swap memwarden; do
+  if launchctl list 2>/dev/null | grep -qi "$svc"; then
+    label=$(launchctl list | grep -i "$svc" | awk '{print $3}' | head -1)
+    echo "unloading $svc LaunchAgent: $label"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || launchctl unload "$HOME/Library/LaunchAgents/${label}.plist" 2>/dev/null || true
+  else
+    echo "no $svc LaunchAgent found (may be running unmanaged)"
+  fi
+done
 pkill -f "llama-swap" 2>/dev/null && echo "killed running llama-swap process(es)" || echo "no running llama-swap process found"
+pkill -f "memwarden" 2>/dev/null && echo "killed running memwarden process(es)" || echo "no running memwarden process found"
+rm -f /tmp/model-gateway.yield 2>/dev/null
 
 echo "--- step 2: confirm no orphan mtplx PIDs survived llama-swap ---"
 # Matched against the actual MTPLX process signatures (see docs/baseline/mtplx-argv.txt),
