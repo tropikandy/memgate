@@ -1,5 +1,5 @@
 #!/bin/bash
-# WP-001 step 1-2: baseline capture. Run this ON THE TARGET MAC MINI, while
+# WP-001 step 1-2: baseline capture. Run this on your target machine, while
 # MTPLX-4B is still running exactly as it does today (before any llama-swap
 # or memgate change). Cannot be run from a remote sandbox -- it depends on
 # launchctl, real MTPLX processes, a real ~/.hermes/config.yaml, and the

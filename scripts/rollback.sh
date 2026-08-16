@@ -2,7 +2,7 @@
 # R12 / T-15: one-command rollback. Re-enables the MTPLX LaunchAgents,
 # stops llama-swap, and restores the original port binding.
 #
-# Run this ON THE TARGET MAC MINI. Requires docs/baseline/ to have been
+# Run this on your target machine. Requires docs/baseline/ to have been
 # populated by scripts/baseline-capture.sh (WP-001) beforehand -- this
 # script restores from what was captured there, it does not invent
 # replacement plists.

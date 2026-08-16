@@ -52,7 +52,7 @@ wait 2>/dev/null
 
 # T-8: genericity - runs against a trivial command with all args supplied,
 # no machine-specific defaults required (no hardcoded paths/ports/model IDs).
-if grep -nE '/Volumes|andreas|8000|mtplx' "$memgate" >/dev/null; then
+if grep -nE '/Volumes|/Users/[a-z]+|8000|mtplx' "$memgate" >/dev/null; then
   fail "T-8: memgate source references machine-specific values"
 else
   pass "T-8: memgate source is free of machine-specific hardcodes"

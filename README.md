@@ -78,7 +78,7 @@ python3 swapbench/swapbench.py validate --config tests/validate.example.json
 - No hardcoded paths, ports, model IDs, or process names in `memgate`,
   `memwarden`, or `swapbench` outside overridable defaults and
   documentation examples. Verify with:
-  `grep -nE '/Volumes|andreas|8000|mtplx' bin/memgate memwarden/memwarden swapbench/swapbench.py warmup/warmup`
+  `grep -nE '/Volumes|/Users/[a-z]+|8000|mtplx' bin/memgate memwarden/memwarden swapbench/swapbench.py warmup/warmup`
   (an empty result is the point — these are generic tools, not tied to
   any one deployment).
 - `memgate` hands off with `exec`, never fork/wait — this is what
