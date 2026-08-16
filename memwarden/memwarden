@@ -104,6 +104,13 @@ class LadderState:
             self._log_event("unload", reason=reason, ok=False, error=str(exc))
 
     def check_stale_lock(self, max_age_s=None):
+        # Also the mechanism for noticing a lock file created by some
+        # other process entirely, not through this daemon's own CLI/HTTP
+        # -- IF-6's whole point ("any process may create the file;
+        # nothing checks ownership") depends on this poll loop actually
+        # reacting, not just a passive /state read reporting lock_held.
+        # Found missing during WP-014: an externally-touched lock file
+        # was visible in `state()` but never triggered drain+unload.
         if not os.path.exists(self.lock_file):
             if self._level != self.LEVEL_NORMAL:
                 with self._lock:
@@ -122,6 +129,20 @@ class LadderState:
                     os.remove(self.lock_file)
                     self._level = self.LEVEL_NORMAL
                 self._log_event("release", level=self._level, reason="stale lock auto-released")
+                return
+        if self._level == self.LEVEL_NORMAL:
+            reason = payload.get("reason", "external lock file")
+            requested_by = payload.get("requested_by", "external")
+            with self._lock:
+                self._level = self.LEVEL_DRAIN
+                self._log_event(
+                    "yield",
+                    reason=reason,
+                    requested_by=requested_by,
+                    level=self._level,
+                    detected="externally created lock file",
+                )
+            self._drain_and_unload(reason)
 
     def state(self):
         with self._lock:
