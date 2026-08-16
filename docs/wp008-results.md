@@ -21,6 +21,47 @@
   risk. Verified by reading the script, not by re-running a full
   rollback (would tear down the just-completed cutover for no reason).
 
+## Real incident found and fixed: cold loads hung indefinitely under the LaunchAgent
+
+T-1 (just `/v1/models`, no model spawn) passed the first time, which
+masked a real bug: **the first time a model actually needed to cold-load
+through the LaunchAgent-managed llama-swap, it hung forever** (blocked in
+a raw `open()` syscall at Python module-exec time, before any of MTPLX's
+own startup output — confirmed via `sample`). The identical command run
+directly from an interactive shell worked instantly and reliably, every
+time, no exceptions.
+
+**Root cause, isolated by bisection:**
+1. Ruled out environment first (`EnvironmentVariables` with `HOME`/
+   `USER`/`PATH` added — still hung).
+2. Reproduced with `launchctl submit` directly (bypassing the plist
+   entirely), proving it was launchd's spawn path, not anything in this
+   specific file.
+3. Bisected via a minimal test LaunchAgent: adding **`WorkingDirectory`**
+   (launchd defaults to `/` for LaunchAgents with none set, unlike an
+   interactive shell's real CWD) fixed it immediately and reliably.
+
+**Fix applied:** `WorkingDirectory` set to `/Users/andreaslarsson/memgate`
+in `com.local.llama-swap.plist`, alongside the `EnvironmentVariables`
+block (kept as good practice even though it wasn't the actual fix).
+Validated with two independent cold-load cycles after the fix, both
+6.0s, both clean.
+
+**Not fully root-caused to the exact file/syscall** — no `sudo`
+available for `dtrace`/`fs_usage` in this session to see precisely what
+`open()` was blocking on with CWD `/`. The fix is empirically confirmed
+reliable (isolated via bisection, not a guess), but if this ever
+resurfaces, that's the next debugging step.
+
+**A real production incident during this investigation, worth being
+honest about:** while chasing this, an earlier `kill -9` on a different
+stuck process combination left the live gateway (port 8000, Hermes's
+real backend) returning 500s / hanging for a period before the fix
+landed. Production was restored to a working state at each checkpoint
+during the investigation (falling back to a manually-run llama-swap
+instance, the proven-reliable method used throughout WP-002-009) rather
+than left broken while debugging continued.
+
 ## What's not done: T-4 (real reboot)
 
 **Deliberately not performed in this session.** A real reboot would end

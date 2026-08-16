@@ -16,6 +16,31 @@
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>WorkingDirectory</key>
+	<string>/Users/andreaslarsson/memgate</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/andreaslarsson</string>
+		<key>USER</key>
+		<string>andreaslarsson</string>
+		<key>PATH</key>
+		<string>/Users/andreaslarsson/.mtplx/bin:/Users/andreaslarsson/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<!-- WP-008 finding: launchd LaunchAgents get (a) a minimal default
+	     environment (PATH=/usr/bin:/bin:/usr/sbin:/sbin only, no HOME/
+	     USER) and (b) no WorkingDirectory (defaults to "/"). Neither
+	     alone caused it, but MTPLX's Python startup reliably hung
+	     (blocked in a raw open() syscall at module-exec time, before any
+	     of its own startup output) under launchd specifically, 100%
+	     reproducible, and 100% fixed once WorkingDirectory was set to a
+	     real, writable directory (isolated via `launchctl submit` and a
+	     bisected test plist, bypassing the plist/LaunchAgent entirely to
+	     confirm it was launchd's spawn path, not this file). Root cause
+	     not traced to the exact file/syscall (no sudo dtrace/fs_usage
+	     available), but the fix is confirmed reliable. Both blocks kept
+	     since EnvironmentVariables is good practice regardless. See
+	     docs/wp008-results.md. -->
 	<key>ThrottleInterval</key>
 	<integer>15</integer>
 	<key>ExitTimeOut</key>
