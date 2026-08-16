@@ -25,9 +25,18 @@ macros:
   # whitespace, so an unquoted reference fails to exec (found during WP-002).
   mtplx_python: "/Users/andreaslarsson/Library/Application Support/MTPLX/runtime-venv/bin/python"
   mtplx_module: "mtplx.server.openai"
-  # WP-002 scope-out: memgate is not wired in yet. Empty string, not the
-  # WP-003 binary -- this WP proves llama-swap's own mechanism in isolation.
-  memgate: ""
+  # WP-006: memgate wired in, per-tier floors (not one shared value --
+  # requiring 27B-level headroom just to load the 4B was a real
+  # miscalibration found during this WP, see docs/wp006-results.md).
+  # Each floor = that model's measured incremental footprint + a margin,
+  # using "available" (which already nets out reclaimable/inactive file
+  # cache) as the basis, not a naive "return to the pristine WP-001 idle
+  # floor" -- that stricter bar isn't what memgate's --require-free-mb is
+  # for. 4B: ~7.8GB measured (T-11, WP-006) + 2GB margin = 9856 -> 10240.
+  # 27B: ~17.4GB measured (contaminated, WP-005) + 2GB margin = 19456 ->
+  # 20480, revisit once WP-006's clean single-model 27B number lands.
+  memgate_4b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 10240 --timeout 180 --"
+  memgate_27b: "/Users/andreaslarsson/.local/bin/memgate --require-free-mb 20480 --timeout 180 --"
 
 models:
 
@@ -36,7 +45,7 @@ models:
   # PID 64781 (com.local.mtplx-server), docs/baseline/mtplx-argv.txt.
   "mtplx-qwen35-4b-optimized-quality":
     cmd: >
-      ${memgate}
+      ${memgate_4b}
       "${mtplx_python}" -m ${mtplx_module}
       --model /Volumes/2tb/Models/mtplx/Youssofal--Qwen3.5-4B-MTPLX-Optimized-Quality
       --backend-id qwen3_next
@@ -71,7 +80,7 @@ models:
   # mtp --depth 3 are both present: "bare" in Bare-Speed does not mean "no MTP".
   "mtplx-qwen38-27b-bare-speed":
     cmd: >
-      ${memgate}
+      ${memgate_27b}
       "${mtplx_python}" -m ${mtplx_module}
       --model /Volumes/2tb/Models/mtplx/Youssofal--Qwen3.8-27B-MTPLX-Bare-Speed
       --backend-id qwen3_next

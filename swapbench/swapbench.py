@@ -136,7 +136,7 @@ def http_json(method, url, body=None, timeout=30):
 def unload_all(gateway_url, unload_path):
     try:
         http_json("POST", gateway_url.rstrip("/") + unload_path)
-    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
         print(f"warning: unload_all failed: {exc}", file=sys.stderr)
 
 
@@ -149,15 +149,26 @@ def wait_healthy(gateway_url, model_id, timeout_s):
         "max_tokens": 1,
     }
     while time.time() < deadline:
+        # Each attempt gets the full remaining budget, not a fixed short
+        # timeout: a cold 27B load can legitimately take much longer than
+        # 10s (N2 budget is 180s), and re-issuing a fresh request every 10s
+        # while MTPLX serially processes the first one (--max-active-requests
+        # 1) would queue retries behind an in-flight cold load rather than
+        # actually waiting for it -- a self-inflicted version of the C6
+        # stall risk this project is measuring. Also catches a bare socket
+        # TimeoutError, not just urllib's own exception types, which was
+        # previously uncaught and crashed this loop outright on a slow
+        # cold load (found running T-11 against the real 27B, WP-006).
+        remaining = max(1, int(deadline - time.time()))
         try:
-            http_json("POST", url, body, timeout=10)
+            http_json("POST", url, body, timeout=remaining)
             return True
-        except (urllib.error.URLError, urllib.error.HTTPError):
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
             time.sleep(1)
     return False
 
 
-def do_swap(gateway_url, proc_pattern, from_model, to_model, unload_path, healthy_timeout, sample_interval):
+def do_swap(gateway_url, proc_pattern, from_model, to_model, unload_path, healthy_timeout, sample_interval, floor_mb=None, floor_tolerance_mb=500):
     sampler = Sampler(proc_pattern, interval=sample_interval)
     sampler.start()
 
@@ -186,13 +197,27 @@ def do_swap(gateway_url, proc_pattern, from_model, to_model, unload_path, health
     record["t_target_healthy_ms"] = now_ms() - t0
 
     # Best-effort fill-in of PID transition timestamps from the sample log.
+    # Only samples taken at or after t0 (when the to_model request was sent)
+    # count -- scanning the full history (including the earlier "warm the
+    # source model" phase) let an already-resident source PID be mistaken
+    # for the target's, producing negative t_target_pid_seen_ms (found
+    # during WP-006's T-5 run against the real gateway).
     for s in sampler.samples:
         if "error" in s:
+            continue
+        if s["t"] < t0:
             continue
         if record["t_source_pid_gone_ms"] is None and from_model and not s["pids"]:
             record["t_source_pid_gone_ms"] = s["t"] - t0
         if record["t_target_pid_seen_ms"] is None and s["pids"]:
             record["t_target_pid_seen_ms"] = s["t"] - t0
+        if (
+            record["t_memory_floor_reached_ms"] is None
+            and floor_mb is not None
+            and record["t_source_pid_gone_ms"] is not None
+            and s["used_mb"] <= floor_mb + floor_tolerance_mb
+        ):
+            record["t_memory_floor_reached_ms"] = s["t"] - t0
 
     sampler.stop()
     record["peak_physmem_mb"] = sampler.peak_used_mb
@@ -219,7 +244,7 @@ def cmd_single(args):
                 {"model": args.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 8},
                 timeout=30,
             )
-        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
             print(f"warning: request failed: {exc}", file=sys.stderr)
         time.sleep(1)
     sampler.stop()
@@ -250,6 +275,7 @@ def cmd_swap(args):
             args.unload_path,
             args.healthy_timeout,
             args.interval,
+            floor_mb=args.floor_mb,
         )
         print(json.dumps(record))
         sys.stdout.flush()
@@ -271,6 +297,7 @@ def cmd_soak(args):
             args.unload_path,
             args.healthy_timeout,
             args.interval,
+            floor_mb=args.floor_mb,
         )
         print(json.dumps(record))
         sys.stdout.flush()
@@ -292,7 +319,7 @@ def cmd_latency(args):
                 {"model": args.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
                 timeout=30,
             )
-        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
             print(f"warning: request failed: {exc}", file=sys.stderr)
             continue
         times.append((time.time() - t0) * 1000)
@@ -347,6 +374,7 @@ def build_parser():
     p.add_argument("--unload-path", default="/api/models/unload", dest="unload_path", help="Management path to unload all models")
     p.add_argument("--interval", type=float, default=1.0, help="Sampler interval in seconds")
     p.add_argument("--healthy-timeout", type=float, default=300, dest="healthy_timeout", help="Seconds to wait for a model to become healthy")
+    p.add_argument("--floor-mb", type=int, default=None, dest="floor_mb", help="Idle-floor used_mb (docs/baseline/memory-floor.json) -- if set, do_swap records t_memory_floor_reached_ms when used_mb returns within tolerance of this after the source model's PID is gone (answers A-2)")
 
     sub = p.add_subparsers(dest="mode", required=True)
 
