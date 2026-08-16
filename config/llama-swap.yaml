@@ -1,14 +1,16 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
 #
-# WP-002/WP-005 scratch config: listening on 127.0.0.1:8801 (IF-1), memgate
-# macro still empty (memgate joins at WP-006). All values below are filled
-# from real captures (docs/baseline/mtplx-argv.txt for the 4B, WP-001;
-# docs/baseline/27b-argv.txt for the 27B, WP-005) -- no «VERIFY» markers
-# remain in this file. Port 8000 / the live MTPLX-4B LaunchAgent are
-# untouched throughout WP-002/WP-005 (C1 scope-out): this file proves the
-# mechanism on a scratch port only, cutover to 8000 is WP-007.
+# Production config, post-WP-007 cutover: listens on 127.0.0.1:8000 (IF-1),
+# the well-known port consumers already use -- zero edits required on their
+# side (R5). Both tiers, memgate wired in with per-tier floors, the
+# mtplx-exclusive group enforcing R4. All values filled from real captures
+# (docs/baseline/mtplx-argv.txt for the 4B, WP-001; docs/baseline/27b-argv.txt
+# for the 27B, WP-005) -- no «VERIFY» markers remain in this file. Prior to
+# WP-007 this ran on a scratch port (8801) for WP-002 through WP-006; see
+# git history for that version if needed.
 #
-# Run: llama-swap -config config/llama-swap.yaml -listen 127.0.0.1:8801
+# Run: llama-swap -config config/llama-swap.yaml -listen 127.0.0.1:8000
+# (WP-008 wraps this in a LaunchAgent so it starts on login.)
 
 # Generous: covers a cold 27B load from external SSD (N2). Minimum accepted is 15.
 healthCheckTimeout: 300
@@ -155,8 +157,7 @@ groups:
       - "mtplx-qwen35-4b-optimized-quality"
       - "mtplx-qwen38-27b-bare-speed"
 
-# memgate joins at WP-006 (macro above goes from "" to the WP-003 binary
-# with --require-free-mb set from docs/baseline/n3-ceiling-derivation.md),
-# and the production MTPLX-4B LaunchAgent must be stopped before that WP's
-# tests run -- see docs/wp002-wp004-results.md for why (a real, measured
-# false-overlap effect otherwise).
+# History: memgate joined at WP-006 (per-tier floors, see the macros block
+# above and docs/baseline/n3-ceiling-derivation.md). The 27B tier joined at
+# WP-005. This file cut over from scratch port 8801 to the production port
+# 8000 at WP-007 -- see docs/wp007-results.md.
