@@ -27,9 +27,13 @@ fi
 pkill -f "llama-swap" 2>/dev/null && echo "killed running llama-swap process(es)" || echo "no running llama-swap process found"
 
 echo "--- step 2: confirm no orphan mtplx PIDs survived llama-swap ---"
-if pgrep -f mtplx >/dev/null 2>&1; then
+# Matched against the actual MTPLX process signatures (see docs/baseline/mtplx-argv.txt),
+# not a bare "mtplx" substring -- that also matches unrelated processes whose argv/env
+# happens to contain "mtplx" (e.g. a PATH entry like ~/.mtplx/bin).
+mtplx_pattern='MTPLX\.app/Contents/MacOS/MTPLXApp|mtplx serve|mtplx\.server\.openai'
+if pgrep -f "$mtplx_pattern" >/dev/null 2>&1; then
   echo "WARNING: mtplx processes still running after stopping llama-swap:"
-  pgrep -afl mtplx || true
+  pgrep -afl "$mtplx_pattern" || true
   echo "(these may be the MTPLX LaunchAgents already restarting in step 3 -- re-check after)"
 fi
 
@@ -58,10 +62,20 @@ fi
 echo "--- step 4: verify port 8000 responds and matches the baseline ---"
 sleep 3
 if curl -s --max-time 5 http://127.0.0.1:8000/v1/models >/tmp/rollback-models.json 2>/dev/null; then
-  if [ -f "$baseline/models.json" ] && diff -q "$baseline/models.json" /tmp/rollback-models.json >/dev/null 2>&1; then
-    echo "OK: /v1/models matches baseline capture"
+  # Compare model IDs only, not the raw JSON: MTPLX's "created" field is
+  # generated per-request and will differ on every call, so a byte-for-byte
+  # diff against the baseline always warns even when nothing is wrong (R5
+  # only cares about the id set, not this timestamp).
+  ids_match=0
+  if [ -f "$baseline/models.json" ]; then
+    baseline_ids=$(python3 -c 'import json,sys; print(sorted(m["id"] for m in json.load(open(sys.argv[1]))["data"]))' "$baseline/models.json" 2>/dev/null)
+    current_ids=$(python3 -c 'import json,sys; print(sorted(m["id"] for m in json.load(open(sys.argv[1]))["data"]))' /tmp/rollback-models.json 2>/dev/null)
+    [ -n "$baseline_ids" ] && [ "$baseline_ids" = "$current_ids" ] && ids_match=1
+  fi
+  if [ "$ids_match" -eq 1 ]; then
+    echo "OK: /v1/models model IDs match baseline capture"
   else
-    echo "WARNING: /v1/models responded but differs from baseline capture -- compare manually:"
+    echo "WARNING: /v1/models responded but its model IDs differ from baseline capture -- compare manually:"
     echo "  diff $baseline/models.json /tmp/rollback-models.json"
   fi
 else
