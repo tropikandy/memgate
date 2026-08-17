@@ -66,7 +66,7 @@ the two reads) and `t_weights = bytes_on_disk / effective_read_MBps`:
 | Model | bytes (MB) | predicted t_weights (s) | measured cold-to-healthy (s) | residual = measured − predicted (s) |
 |---|---|---|---|---|
 | 4B (`mtplx-qwen35-4b-optimized-quality`) | 4,364 | 1.27 | 6.67 (run 1), 5.92 (run 2, immediately after) — avg 6.30 | ~5.03 |
-| 27B (`mtplx-qwen38-27b-bare-speed`) | 16,154 | 4.70 | **not yet measured** — requires the 27B live in the gateway (WP-005/WP-006) | n/a |
+| 27B (`mtplx-qwen38-27b-bare-speed`) | 16,154 | 4.70 | 13.47-19.54 (T-5, 20 alternating swaps, `docs/measurements.md`) | 8.77-14.84 |
 
 The 4B measurements are real, from the live WP-002 gateway
 (`docs/wp002-wp004-results.md`, T-2 and the T-20 run below). The residual
@@ -77,14 +77,12 @@ residual also includes `t_compile` and `t_health`, so ~5 s total across
 all three is consistent with that estimate, not a red flag.
 
 **27B prediction** (residual assumed roughly constant across model size,
-per Section 6.5 -- an assumption, not yet verified, and the biggest
-model-size jump in this project so it carries more risk than the 4B
-number): predicted cold-to-healthy ≈ 4.70 + 5.03 ≈ **~9.7 s**, far under
-N5's 180 s budget. Even a generously pessimistic residual (say, 3x the
-4B's, if compile time scales with parameter count) would land around
-19.8 s, still comfortably under budget. **This prediction must be
-replaced with a real measurement at WP-005/WP-006** -- it is not a
-substitute for T-2 run against the actual 27B.
+per Section 6.5): predicted cold-to-healthy ≈ 4.70 + 5.03 ≈ **~9.7 s**,
+far under N5's 180 s budget. **Confirmed by WP-005/WP-006's real T-5
+measurement**: 13.47-19.54 s across 20 alternating swaps (residual
+8.77-14.84 s) — the residual came in larger than the 4B's, but still an
+order of magnitude under the 180 s budget, so the prediction's
+qualitative conclusion (no storage-tier risk) holds.
 
 ## 4. Storage move recommendation
 

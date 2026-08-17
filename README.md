@@ -79,8 +79,12 @@ python3 swapbench/swapbench.py validate --config tests/validate.example.json
   `memwarden`, or `swapbench` outside overridable defaults and
   documentation examples. Verify with:
   `grep -nE '/Volumes|/Users/[a-z]+|8000|mtplx' bin/memgate memwarden/memwarden swapbench/swapbench.py warmup/warmup`
-  (an empty result is the point — these are generic tools, not tied to
-  any one deployment).
+  `bin/memgate` and `warmup/warmup` should come back empty (enforced by
+  `tests/test_memgate.sh`'s T-8). `memwarden` and `swapbench.py` will
+  each show one hit — `DEFAULT_GATEWAY_URL = "http://127.0.0.1:8000"`
+  and `--proc-pattern` defaulting to `mtplx` respectively — both plain
+  CLI-overridable defaults, not something a fork has to edit source to
+  change.
 - `memgate` hands off with `exec`, never fork/wait — this is what
   prevents an orphaned, fully-loaded model process surviving a
   supervisor's `SIGTERM` to the wrapper instead of the real workload.
@@ -90,3 +94,7 @@ python3 swapbench/swapbench.py validate --config tests/validate.example.json
   of the box. Inferred signals are a deliberate, separate opt-in, meant
   to be tuned from real observed behavior on your machine rather than
   guessed at.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
